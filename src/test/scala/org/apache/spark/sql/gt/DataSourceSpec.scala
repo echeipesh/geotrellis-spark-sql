@@ -71,7 +71,7 @@ class DataSourceSpec extends FunSpec
     }
 
     it("should provide un-packable records"){
-      val df = dfr.load().select($"col", $"row", $"extent.xmin", $"tile")
+      val df = dfr.load().select($"extent.xmin", $"extent.xmax")
       df.show()
       assert(df.count > 0)
     }

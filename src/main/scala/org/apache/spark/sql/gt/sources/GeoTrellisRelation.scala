@@ -31,6 +31,8 @@ case class GeoTrellisRelation(sqlContext: SQLContext, uri: URI, layerId: LayerId
       StructField("ymin", DataTypes.DoubleType, nullable=false),
       StructField("ymax", DataTypes.DoubleType, nullable=false)
     ))),
+    StructField("epsg", DataTypes.IntegerType, nullable =true),
+    StructField("proj4", DataTypes.StringType, nullable =false),
     StructField("tile", TileUDT, nullable =true)
   ))
 
@@ -44,6 +46,20 @@ case class GeoTrellisRelation(sqlContext: SQLContext, uri: URI, layerId: LayerId
     filters
   }
 
+  private def project(
+    key: SpatialKey,
+    tile: Tile,
+    metadata: TileLayerMetadata[SpatialKey],
+    column: String
+  ): Any = column match {
+    case "tile" => tile
+    case "col" => key.col
+    case "row" => key.row
+    case "extent" => metadata.layout.mapTransform(key)
+    case "epsg" => metadata.crs.epsgCode.orNull
+    case "proj4" => metadata.crs.toProj4String
+  }
+
   override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
     logger.debug(s"Reading: $layerId from $uri")
     logger.debug(s"Required columns: ${requiredColumns.toList}")
@@ -52,17 +68,16 @@ case class GeoTrellisRelation(sqlContext: SQLContext, uri: URI, layerId: LayerId
     implicit val sc = sqlContext.sparkContext
 
     // TODO: check they type of layer before reading, generating time column dynamically
-    // FIX: do not ignore requiredColumns, it breaks DataFrames selection from DataSource
     val reader = GeoTrellisRelation.layerReaderFromUri(uri)
     val query = reader.query[SpatialKey, Tile, TileLayerMetadata[SpatialKey]](layerId)
     val rdd = bbox match {
       case Some(extent) => query.where(Intersects(extent)).result
       case None => query.result
     }
-
-    rdd.map { case (sk: SpatialKey, tile: Tile) =>
-      val key_extent: Extent = rdd.metadata.layout.mapTransform(sk)
-      Row(sk.col, sk.row, key_extent, tile)
+    val md = rdd.metadata
+    rdd.map { case (key: SpatialKey, tile: Tile) =>
+      val cols = requiredColumns.map(project(key, tile, md, _))
+      Row(cols: _*)
     }
   }
 }
